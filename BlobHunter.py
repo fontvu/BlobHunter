@@ -4,14 +4,15 @@ from azure.identity import AzureCliCredential
 from azure.mgmt.resource import SubscriptionClient, ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
 from azure.storage.blob import BlobServiceClient, ContainerClient
+from azure.storage.blob import BlobClient
 import subprocess
 import csv
 import os
+import time
 
 ENDPOINT_URL = '{}.blob.core.windows.net'
 CONTAINER_URL = '{}.blob.core.windows.net/{}/'
 EXTENSIONS = ["txt", "csv", "pdf", "docx", "xlsx"]
-
 
 def get_credentials():
     try:
@@ -45,12 +46,22 @@ def get_tenants_and_subscriptions(creds):
             if ten_id == ten.id[9:]:
                 tenants_names.append(ten.display_name)
 
-    return tenants_ids, tenants_names, subscriptions_ids, subscription_names
+    return tenants_ids, tenants_names, subscriptions_ids, subscription_names    
 
 
-def check_storage_account(account_name, key):
-    blob_service_client = BlobServiceClient(ENDPOINT_URL.format(account_name), credential=key)
-    containers = blob_service_client.list_containers(timeout=15)
+def check_storage_account(account_name, key, group_name):
+    query = ' --query "primaryEndpoints.blob"'
+    blobENDPOINT = subprocess.check_output("az storage account show -n "+ account_name + " -g " + group_name + query, shell=True,
+                                           stderr=subprocess.DEVNULL).decode("utf-8")
+    
+    containers = []
+    
+    if len(blobENDPOINT) > 1:
+        blob_service_client = BlobServiceClient(ENDPOINT_URL.format(account_name), credential=key)
+        containers = blob_service_client.list_containers(timeout=15)
+        time.sleep(5)
+        print(ENDPOINT_URL.format(account_name))
+        print(blobENDPOINT)
 
     public_containers = list()
     for cont in containers:
@@ -89,31 +100,35 @@ def check_subscription(tenant_id, tenant_name, sub_id, sub_name, creds):
                 storage_keys = {v.key_name: v.value for v in storage_keys.keys}
                 group_to_names_dict[group][account] = storage_keys['key1']
 
-            except azure.core.exceptions.HttpResponseError:
+            except azure.core.exceptions.HttpResponseError as E:
                 print("\t\t[-] User do not have permissions to retrieve storage accounts keys in the given"
                       " subscription", flush=True)
                 print("\t\t    Can not scan storage accounts", flush=True)
-                return
+                pass
 
     output_list = list()
 
     for group in resource_groups:
         for account in group_to_names_dict[group].keys():
-            key = group_to_names_dict[group][account]
-            public_containers = check_storage_account(account, key)
+            try:
+                key = group_to_names_dict[group][account]
+                print(group)
+                public_containers = check_storage_account(account, key, group)
 
-            for cont in public_containers:
-                access_level = cont.public_access
-                container_client = ContainerClient(ENDPOINT_URL.format(account), cont.name, credential=key)
-                files = [f.name for f in container_client.list_blobs()]
-                ext_dict = count_files_extensions(files, EXTENSIONS)
-                row = [tenant_id, tenant_name, sub_id, sub_name, group, account, cont.name, access_level,
-                       CONTAINER_URL.format(account, cont.name), len(files)]
+                for cont in public_containers:
+                    access_level = cont.public_access
+                    container_client = ContainerClient(ENDPOINT_URL.format(account), cont.name, credential=key)
+                    files = [f.name for f in container_client.list_blobs()]
+                    ext_dict = count_files_extensions(files, EXTENSIONS)
+                    row = [tenant_id, tenant_name, sub_id, sub_name, group, account, cont.name, access_level,
+                        CONTAINER_URL.format(account, cont.name), len(files)]
 
-                for ext in ext_dict.keys():
-                    row.append(ext_dict[ext])
+                    for ext in ext_dict.keys():
+                        row.append(ext_dict[ext])
 
-                output_list.append(row)
+                    output_list.append(row)
+            except azure.core.exceptions.HttpResponseError as E:
+                print(E)
 
     print("\t\t[+] Scanned all storage accounts successfully", flush=True)
 
