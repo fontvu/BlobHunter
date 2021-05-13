@@ -60,8 +60,8 @@ def check_storage_account(account_name, key, group_name):
         blob_service_client = BlobServiceClient(ENDPOINT_URL.format(account_name), credential=key)
         containers = blob_service_client.list_containers(timeout=15)
         time.sleep(5)
-        print(ENDPOINT_URL.format(account_name))
-        print(blobENDPOINT)
+        #print(ENDPOINT_URL.format(account_name))
+        #print(blobENDPOINT)
 
     public_containers = list()
     for cont in containers:
